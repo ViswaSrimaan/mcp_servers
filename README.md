@@ -147,6 +147,15 @@ graph LR
 | `uninstall_app` | Uninstall applications ⚠️ |
 | `update_app` | Update applications ⚠️ |
 
+### Desktop Automation
+| Tool | Description |
+|------|-------------|
+| `send_notification` | Send desktop notifications (toast/balloon) |
+| `schedule_task` | Schedule recurring tasks (Task Scheduler) ⚠️ |
+| `list_scheduled_tasks` | List scheduled tasks |
+| `delete_scheduled_task` | Delete scheduled tasks ⚠️ |
+| `get_window_list` | List open application windows |
+
 ### Utilities
 | Tool | Description |
 |------|-------------|
@@ -309,6 +318,14 @@ Once configured, you can ask your AI assistant to:
 "Open https://github.com in my browser"
 ```
 
+### Desktop Automation
+```
+"Send a notification 'Task Complete' with message 'The build finished successfully'"
+"Schedule a task 'DailyBackup' to run 'backup.bat' daily at 10:00"
+"List all scheduled tasks"
+"Get a list of all open windows"
+```
+
 ---
 
 ## 🔒 Security & Safety
@@ -356,7 +373,8 @@ mcp_servers/
 │       ├── file_tools.py      # File management operations
 │       ├── web_tools.py       # Web search, fetch, download
 │       ├── app_tools.py       # Application management (winget)
-│       └── utility_tools.py   # Clipboard, screenshots, open apps
+│       ├── utility_tools.py   # Clipboard, screenshots, open apps
+│       └── desktop_tools.py   # Desktop automation, notifications, task scheduler
 ├── .venv/                 # Python virtual environment
 ├── .gitignore
 └── README.md
