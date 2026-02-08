@@ -1,0 +1,285 @@
+{
+  "path_traversal": [
+    {
+      "path": "C:/Windows/System32/drivers/etc/hosts",
+      "operation": "read",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to system directory 'C:\\Windows' is not allowed"
+    },
+    {
+      "path": "C:/Windows/System32/cmd.exe",
+      "operation": "read",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to system directory 'C:\\Windows' is not allowed"
+    },
+    {
+      "path": "C:/Program Files/test.txt",
+      "operation": "read",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to system directory 'C:\\Program Files' is not allowed"
+    },
+    {
+      "path": "C:/Program Files (x86)/malware.exe",
+      "operation": "write",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to system directory 'C:\\Program Files' is not allowed"
+    },
+    {
+      "path": "C:/Users/test/Documents/readme.txt",
+      "operation": "read",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "path": "/etc/passwd",
+      "operation": "read",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to system directory '/etc' is not allowed"
+    },
+    {
+      "path": "/etc/shadow",
+      "operation": "read",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to system directory '/etc' is not allowed"
+    },
+    {
+      "path": "C:/Users/test/malware.bat",
+      "operation": "write",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Writing files with extension '.bat' is not allowed"
+    },
+    {
+      "path": "C:/Users/test/script.ps1",
+      "operation": "write",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Writing files with extension '.ps1' is not allowed"
+    },
+    {
+      "path": "C:/Users/test/document.txt",
+      "operation": "write",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "path": "C:/Users/test/image.png",
+      "operation": "write",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    }
+  ],
+  "ssrf": [
+    {
+      "url": "http://localhost:3000/api",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to 'localhost' is blocked (internal/metadata endpoint)"
+    },
+    {
+      "url": "http://127.0.0.1:8080",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to '127.0.0.1' is blocked (internal/metadata endpoint)"
+    },
+    {
+      "url": "http://192.168.1.1",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to private/internal IP '192.168.1.1' is blocked"
+    },
+    {
+      "url": "http://10.0.0.1",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to private/internal IP '10.0.0.1' is blocked"
+    },
+    {
+      "url": "http://172.16.0.1",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to private/internal IP '172.16.0.1' is blocked"
+    },
+    {
+      "url": "http://169.254.169.254/metadata",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to '169.254.169.254' is blocked (internal/metadata endpoint)"
+    },
+    {
+      "url": "http://metadata.google.internal",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to 'metadata.google.internal' is blocked (internal/metadata endpoint)"
+    },
+    {
+      "url": "http://[::1]/",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Access to '::1' is blocked (internal/metadata endpoint)"
+    },
+    {
+      "url": "https://www.google.com",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "url": "https://api.github.com",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "url": "ftp://files.example.com",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "URL scheme 'ftp' is not allowed. Allowed: https, http"
+    },
+    {
+      "url": "file:///etc/passwd",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "URL scheme 'file' is not allowed. Allowed: https, http"
+    }
+  ],
+  "command_injection": [
+    {
+      "check": "Uses confirmation token",
+      "status": "PASS"
+    },
+    {
+      "check": "Docstring mentions confirmation",
+      "status": "PASS"
+    },
+    {
+      "check": "Docstring mentions destructive/dangerous",
+      "status": "PASS"
+    }
+  ],
+  "execution_restriction": [
+    {
+      "target": "notepad",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "target": "calc",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "target": "notepad.exe",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "target": "chrome",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "target": "https://www.google.com",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "target": "malware.exe",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Opening files with extension '.exe' is not allowed for security. Safe extensions: .avi, .bmp, .csv, .doc, .docx, .gif, .htm, .html, .ico, .jpeg..."
+    },
+    {
+      "target": "C:/Users/test/hack.bat",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Opening files with extension '.bat' is not allowed for security. Safe extensions: .avi, .bmp, .csv, .doc, .docx, .gif, .htm, .html, .ico, .jpeg..."
+    },
+    {
+      "target": "C:/Users/test/evil.ps1",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Opening files with extension '.ps1' is not allowed for security. Safe extensions: .avi, .bmp, .csv, .doc, .docx, .gif, .htm, .html, .ico, .jpeg..."
+    },
+    {
+      "target": "cmd.exe",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Opening files with extension '.exe' is not allowed for security. Safe extensions: .avi, .bmp, .csv, .doc, .docx, .gif, .htm, .html, .ico, .jpeg..."
+    },
+    {
+      "target": "powershell.exe",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Opening files with extension '.exe' is not allowed for security. Safe extensions: .avi, .bmp, .csv, .doc, .docx, .gif, .htm, .html, .ico, .jpeg..."
+    },
+    {
+      "target": "ransomware.scr",
+      "expected": "BLOCKED",
+      "actual": "BLOCKED",
+      "status": "PASS",
+      "reason": "Opening files with extension '.scr' is not allowed for security. Safe extensions: .avi, .bmp, .csv, .doc, .docx, .gif, .htm, .html, .ico, .jpeg..."
+    },
+    {
+      "target": "C:/Users/test/document.pdf",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    },
+    {
+      "target": "C:/Users/test/image.png",
+      "expected": "ALLOWED",
+      "actual": "ALLOWED",
+      "status": "PASS",
+      "reason": "Allowed"
+    }
+  ]
+}

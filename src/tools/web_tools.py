@@ -11,6 +11,8 @@ from urllib.parse import quote_plus
 import httpx
 from bs4 import BeautifulSoup
 
+from src.security_config import is_url_safe, is_path_allowed
+
 logger = logging.getLogger(__name__)
 
 # Common headers to avoid being blocked
@@ -37,6 +39,7 @@ def register_tools(mcp) -> None:
         """
         num_results = min(max(num_results, 1), 20)
 
+        # Note: DuckDuckGo is a trusted search engine, no SSRF check needed here
         try:
             async with httpx.AsyncClient(
                 headers=_HEADERS, follow_redirects=True, timeout=15.0
@@ -89,6 +92,14 @@ def register_tools(mcp) -> None:
             url: The URL to fetch.
             extract_text: If True, extract clean text from HTML. If False, return raw HTML (default: True).
         """
+        # Security: Validate URL to prevent SSRF
+        safe, reason = is_url_safe(url)
+        if not safe:
+            return json.dumps({
+                "status": "error",
+                "message": f"URL blocked for security: {reason}",
+            })
+
         try:
             async with httpx.AsyncClient(
                 headers=_HEADERS, follow_redirects=True, timeout=30.0
@@ -158,7 +169,23 @@ def register_tools(mcp) -> None:
             url: The URL of the file to download.
             save_path: The local path to save the downloaded file.
         """
+        # Security: Validate URL to prevent SSRF
+        safe, reason = is_url_safe(url)
+        if not safe:
+            return json.dumps({
+                "status": "error",
+                "message": f"URL blocked for security: {reason}",
+            })
+
         target = Path(save_path).resolve()
+
+        # Security: Validate save path
+        allowed, reason = is_path_allowed(target, for_write=True)
+        if not allowed:
+            return json.dumps({
+                "status": "error",
+                "message": f"Save path blocked for security: {reason}",
+            })
 
         try:
             target.parent.mkdir(parents=True, exist_ok=True)

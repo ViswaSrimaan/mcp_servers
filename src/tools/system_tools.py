@@ -72,6 +72,10 @@ def register_tools(mcp) -> None:
     async def run_command(command: str, timeout: int = 30) -> str:
         """Run a shell command on the system and return the output.
 
+        POTENTIALLY DANGEROUS: This action requires confirmation to prevent
+        command injection attacks. The tool will return a confirmation token
+        that must be passed to confirm_action to execute.
+
         Uses PowerShell on Windows. The command runs asynchronously with a
         configurable timeout to prevent runaway processes.
 
@@ -81,61 +85,71 @@ def register_tools(mcp) -> None:
         """
         timeout = min(max(timeout, 1), 300)
 
-        try:
-            if platform.system() == "Windows":
-                process = await asyncio.create_subprocess_exec(
-                    "powershell",
-                    "-NoProfile",
-                    "-Command",
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+        # Truncate command preview for display
+        cmd_preview = command[:100] + "..." if len(command) > 100 else command
+
+        async def _do_run_command():
+            try:
+                if platform.system() == "Windows":
+                    process = await asyncio.create_subprocess_exec(
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        command,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                else:
+                    process = await asyncio.create_subprocess_shell(
+                        command,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), timeout=timeout
                 )
-            else:
-                process = await asyncio.create_subprocess_shell(
-                    command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
+            except asyncio.TimeoutError:
+                process.kill()
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Command timed out after {timeout} seconds.",
+                    "command": command,
+                })
+            except Exception as e:
+                return json.dumps({
+                    "status": "error",
+                    "message": f"Failed to execute command: {e}",
+                    "command": command,
+                })
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            return json.dumps({
-                "status": "error",
-                "message": f"Command timed out after {timeout} seconds.",
+            stdout_text = stdout.decode("utf-8", errors="replace").strip()
+            stderr_text = stderr.decode("utf-8", errors="replace").strip()
+
+            result = {
+                "status": "success" if process.returncode == 0 else "error",
+                "exit_code": process.returncode,
                 "command": command,
-            })
-        except Exception as e:
-            return json.dumps({
-                "status": "error",
-                "message": f"Failed to execute command: {e}",
-                "command": command,
-            })
+            }
 
-        stdout_text = stdout.decode("utf-8", errors="replace").strip()
-        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+            if stdout_text:
+                # Truncate if too long
+                if len(stdout_text) > 10000:
+                    stdout_text = stdout_text[:10000] + "\n... (output truncated)"
+                result["stdout"] = stdout_text
 
-        result = {
-            "status": "success" if process.returncode == 0 else "error",
-            "exit_code": process.returncode,
-            "command": command,
-        }
+            if stderr_text:
+                if len(stderr_text) > 5000:
+                    stderr_text = stderr_text[:5000] + "\n... (stderr truncated)"
+                result["stderr"] = stderr_text
 
-        if stdout_text:
-            # Truncate if too long
-            if len(stdout_text) > 10000:
-                stdout_text = stdout_text[:10000] + "\n... (output truncated)"
-            result["stdout"] = stdout_text
+            return json.dumps(result, indent=2)
 
-        if stderr_text:
-            if len(stderr_text) > 5000:
-                stderr_text = stderr_text[:5000] + "\n... (stderr truncated)"
-            result["stderr"] = stderr_text
-
-        return json.dumps(result, indent=2)
+        return create_confirmation_token(
+            action_name="run_command",
+            description=f"Execute shell command: {cmd_preview}",
+            callback=_do_run_command,
+        )
 
     @mcp.tool()
     async def list_processes(

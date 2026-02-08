@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from src.safety import create_confirmation_token
+from src.security_config import is_path_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ def register_tools(mcp) -> None:
             show_hidden: Whether to include hidden files (default: False).
         """
         target = Path(path).resolve()
+
+        # Security: Validate path is allowed
+        allowed, reason = is_path_allowed(target)
+        if not allowed:
+            return json.dumps({"status": "error", "message": reason})
 
         if not target.exists():
             return json.dumps({"status": "error", "message": f"Path does not exist: {target}"})
@@ -95,6 +101,11 @@ def register_tools(mcp) -> None:
         max_lines = min(max(max_lines, 1), 5000)
         target = Path(path).resolve()
 
+        # Security: Validate path is allowed
+        allowed, reason = is_path_allowed(target)
+        if not allowed:
+            return json.dumps({"status": "error", "message": reason})
+
         if not target.exists():
             return json.dumps({"status": "error", "message": f"File does not exist: {target}"})
 
@@ -141,6 +152,11 @@ def register_tools(mcp) -> None:
             append: If True, append to existing file. If False, overwrite (default: False).
         """
         target = Path(path).resolve()
+
+        # Security: Validate path is allowed for writing
+        allowed, reason = is_path_allowed(target, for_write=True)
+        if not allowed:
+            return json.dumps({"status": "error", "message": reason})
 
         try:
             target.parent.mkdir(parents=True, exist_ok=True)

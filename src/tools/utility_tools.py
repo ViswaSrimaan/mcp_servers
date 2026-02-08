@@ -10,6 +10,8 @@ import platform
 import tempfile
 from pathlib import Path
 
+from src.security_config import is_execution_safe, is_path_allowed
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,13 +77,21 @@ def register_tools(mcp) -> None:
         """Open an application by name or file path.
 
         On Windows, this uses os.startfile which works with:
-        - Application names (e.g., 'notepad', 'calc')
-        - File paths (opens with default application)
+        - Safe application names (e.g., 'notepad', 'calc')
+        - Safe file types (documents, images, media)
         - URLs (opens in default browser)
 
         Args:
             app_name_or_path: Application name, file path, or URL to open.
         """
+        # Security: Validate the target is safe to execute
+        safe, reason = is_execution_safe(app_name_or_path)
+        if not safe:
+            return json.dumps({
+                "status": "error",
+                "message": reason,
+            })
+
         try:
             if platform.system() == "Windows":
                 os.startfile(app_name_or_path)
@@ -124,6 +134,16 @@ def register_tools(mcp) -> None:
                 )
 
             target = Path(save_path).resolve()
+
+            # Security: Validate save path (but allow temp directory)
+            if not str(target).startswith(tempfile.gettempdir()):
+                allowed, reason = is_path_allowed(target, for_write=True)
+                if not allowed:
+                    return json.dumps({
+                        "status": "error",
+                        "message": reason,
+                    })
+
             target.parent.mkdir(parents=True, exist_ok=True)
 
             img = ImageGrab.grab()

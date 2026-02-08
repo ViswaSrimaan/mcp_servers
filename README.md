@@ -92,6 +92,7 @@ graph LR
 
     subgraph "src/"
         G[safety.py<br/>Confirmation System]
+        H[security_config.py<br/>Security Hardening]
     end
 
     A --> B
@@ -100,6 +101,7 @@ graph LR
     A --> E
     A --> F
     A --> G
+    A --> H
 ```
 
 ---
@@ -110,7 +112,7 @@ graph LR
 | Tool | Description |
 |------|-------------|
 | `get_system_info` | CPU, memory, disk, and OS information |
-| `run_command` | Execute PowerShell commands with timeout |
+| `run_command` | Execute PowerShell commands ⚠️ (requires confirmation) |
 | `list_processes` | View running processes sorted by CPU/memory |
 | `kill_process` | Terminate processes ⚠️ |
 | `get_battery_status` | Battery level and charging status |
@@ -313,6 +315,27 @@ Once configured, you can ask your AI assistant to:
 
 ## 🔒 Security & Safety
 
+### Security Hardening
+
+This MCP server includes comprehensive security protections against common attack vectors:
+
+| Protection | Description |
+|------------|-------------|
+| 🛡️ **Path Traversal Protection** | Blocks access to system directories (Windows, Program Files, /etc) |
+| 🛡️ **SSRF Prevention** | Blocks requests to internal IPs, localhost, and cloud metadata endpoints |
+| 🛡️ **Command Injection Protection** | Shell commands require explicit user confirmation |
+| 🛡️ **Execution Restrictions** | Only safe applications and file types can be opened |
+| 🛡️ **Write Protection** | Blocks writing executable files (.exe, .bat, .ps1, etc.) |
+
+### Security Configuration
+
+You can optionally restrict file operations to specific directories:
+
+```powershell
+# Set allowed directories (comma-separated)
+$env:MCP_ALLOWED_DIRECTORIES = "C:\Users\YourName\Documents,C:\Projects"
+```
+
 ### Two-Phase Confirmation System
 
 Destructive operations use a token-based confirmation system:
@@ -332,12 +355,29 @@ sequenceDiagram
     MCP-->>AI: Success response
 ```
 
+### Protected Operations
+
+The following operations require explicit confirmation:
+
+| Operation | Reason |
+|-----------|--------|
+| `run_command` | Prevents command injection via prompt injection |
+| `delete_file` | Prevents accidental data loss |
+| `move_file` | Can overwrite existing files |
+| `kill_process` | Can affect system stability |
+| `shutdown_restart` | System-critical operation |
+| `uninstall_app` | Removes installed software |
+| `update_app` | Modifies installed software |
+
 ### Safety Features
 
 - ✅ **Confirmation Required** - Destructive actions need explicit confirmation
 - ✅ **Token Expiration** - Confirmation tokens expire after 5 minutes
 - ✅ **User Permissions** - Commands run with your user permissions (not admin)
 - ✅ **Timeout Protection** - Commands have configurable timeouts (max 300s)
+- ✅ **Blocked Directories** - System directories are protected
+- ✅ **SSRF Protection** - Internal network access is blocked
+- ✅ **Execution Whitelist** - Only safe apps can be opened
 - ✅ **Logging** - All operations are logged for debugging
 
 ---
@@ -350,6 +390,7 @@ mcp_servers/
 ├── src/
 │   ├── __init__.py
 │   ├── safety.py          # Confirmation token system
+│   ├── security_config.py # Security hardening configuration
 │   └── tools/
 │       ├── __init__.py
 │       ├── system_tools.py    # System info, commands, processes
@@ -357,6 +398,8 @@ mcp_servers/
 │       ├── web_tools.py       # Web search, fetch, download
 │       ├── app_tools.py       # Application management (winget)
 │       └── utility_tools.py   # Clipboard, screenshots, open apps
+├── test_security.py       # Security test suite
+├── SECURITY_REPORT.md     # Security audit report
 ├── .venv/                 # Python virtual environment
 ├── .gitignore
 └── README.md
