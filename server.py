@@ -30,7 +30,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Create the MCP server instance
-mcp = FastMCP("Laptop Assistant")
+mcp = FastMCP("laptop-assistant")
 
 
 # Register tools

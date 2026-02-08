@@ -4,41 +4,48 @@ Provides tools for task scheduling, notifications, and window management.
 """
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import platform
-import subprocess
-from typing import Literal
 
 from src.safety import create_confirmation_token
 
 logger = logging.getLogger(__name__)
 
 
-async def _run_powershell(command: str) -> tuple[int, str, str]:
+async def _run_powershell(command: str, timeout: int = 30) -> tuple[int, str, str]:
     """Run a PowerShell command and return (returncode, stdout, stderr)."""
-    # Use -EncodedCommand or just pass the command string?
-    # For safety and complexity, passed as string to -Command is usually fine for internal use
-    # provided we are careful with quoting.
-    # Actually, simpler to use the same pattern as system_tools.
-    
-    process = await asyncio.create_subprocess_exec(
-        "powershell",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    
-    stdout, stderr = await process.communicate()
-    
-    return (
-        process.returncode,
-        stdout.decode("utf-8", errors="replace").strip(),
-        stderr.decode("utf-8", errors="replace").strip(),
-    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            return (
+                -1,
+                "",
+                f"Command timed out after {timeout} seconds",
+            )
+        
+        return (
+            process.returncode,
+            stdout.decode("utf-8", errors="replace").strip(),
+            stderr.decode("utf-8", errors="replace").strip(),
+        )
+    except Exception as e:
+        return (-1, "", str(e))
 
 
 def register_tools(mcp) -> None:
@@ -119,19 +126,27 @@ def register_tools(mcp) -> None:
             })
 
         async def _do_schedule():
-            # Build schtasks command
-            # /F forces creation (overwrites if exists)
-            cmd_args = f'schtasks /create /tn "{name}" /tr "{command}" /sc {schedule_type} /f'
+            # Use direct subprocess execution to avoid shell injection
+            args = ["/create", "/tn", name, "/tr", command, "/sc", schedule_type, "/f"]
             
             if schedule_type.upper() not in ["ONLOGON", "ONSTART"]:
-                cmd_args += f' /st {start_time}'
+                args.extend(["/st", start_time])
             
-            code, stdout, stderr = await _run_powershell(cmd_args)
-            
-            if code == 0:
-                return f"Successfully scheduled task '{name}'.\n{stdout}"
-            else:
-                return f"Failed to schedule task '{name}': {stderr or stdout}"
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    "schtasks",
+                    *args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await process.communicate()
+                
+                if process.returncode == 0:
+                    return f"Successfully scheduled task '{name}'.\n{stdout.decode().strip()}"
+                else:
+                    return f"Failed to schedule task '{name}': {stderr.decode().strip() or stdout.decode().strip()}"
+            except Exception as e:
+                return f"Failed to execute schtasks: {str(e)}"
 
         return create_confirmation_token(
             action_name="schedule_task",
@@ -154,9 +169,6 @@ def register_tools(mcp) -> None:
                 "status": "error",
                 "message": f"Failed to list tasks: {stderr}",
             })
-            
-        import csv
-        import io
         
         tasks = []
         try:
@@ -205,12 +217,25 @@ def register_tools(mcp) -> None:
         """
         
         async def _do_delete():
-            code, stdout, stderr = await _run_powershell(f'schtasks /delete /tn "{name}" /f')
-            
-            if code == 0:
-                return f"Successfully deleted task '{name}'."
-            else:
-                return f"Failed to delete task '{name}': {stderr or stdout}"
+            try:
+                # Use direct subprocess execution to avoid shell injection
+                process = await asyncio.create_subprocess_exec(
+                    "schtasks",
+                    "/delete",
+                    "/tn",
+                    name,
+                    "/f",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, stderr = await process.communicate()
+                
+                if process.returncode == 0:
+                    return f"Successfully deleted task '{name}'."
+                else:
+                    return f"Failed to delete task '{name}': {stderr.decode().strip() or stdout.decode().strip()}"
+            except Exception as e:
+                return f"Failed to execute schtasks: {str(e)}"
 
         return create_confirmation_token(
             action_name="delete_scheduled_task",
