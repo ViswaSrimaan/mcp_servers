@@ -224,6 +224,7 @@ def is_execution_safe(app_name_or_path: str) -> tuple[bool, str]:
     lower = target.lower()
 
     # Allow URLs (they open in the browser)
+    # The http/https prefixes below are protocol checks, not URLs being accessed
     if lower.startswith("http://") or lower.startswith("https://"):
         return True, ""
 

@@ -96,12 +96,16 @@ def register_tools(mcp) -> None:
             if platform.system() == "Windows":
                 os.startfile(app_name_or_path)
             else:
+                import asyncio
                 import subprocess
 
-                if platform.system() == "Darwin":
-                    subprocess.Popen(["open", app_name_or_path])
-                else:
-                    subprocess.Popen(["xdg-open", app_name_or_path])
+                def _open_app():
+                    if platform.system() == "Darwin":
+                        subprocess.Popen(["open", app_name_or_path])
+                    else:
+                        subprocess.Popen(["xdg-open", app_name_or_path])
+
+                await asyncio.to_thread(_open_app)
 
             return json.dumps({
                 "status": "success",

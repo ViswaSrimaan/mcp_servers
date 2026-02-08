@@ -169,6 +169,8 @@ def register_tools(mcp) -> None:
             url: The URL of the file to download.
             save_path: The local path to save the downloaded file.
         """
+        import asyncio
+
         # Security: Validate URL to prevent SSRF
         safe, reason = is_url_safe(url)
         if not safe:
@@ -188,7 +190,7 @@ def register_tools(mcp) -> None:
             })
 
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(lambda: target.parent.mkdir(parents=True, exist_ok=True))
 
             async with httpx.AsyncClient(
                 headers=_HEADERS, follow_redirects=True, timeout=120.0
@@ -196,11 +198,18 @@ def register_tools(mcp) -> None:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()
 
-                    total_size = 0
-                    with open(target, "wb") as f:
-                        async for chunk in response.aiter_bytes(chunk_size=8192):
-                            f.write(chunk)
-                            total_size += len(chunk)
+                    # Collect chunks first, then write synchronously in thread
+                    chunks = []
+                    async for chunk in response.aiter_bytes(chunk_size=8192):
+                        chunks.append(chunk)
+
+                    def _write_file():
+                        with open(target, "wb") as f:
+                            for chunk in chunks:
+                                f.write(chunk)
+                        return sum(len(c) for c in chunks)
+
+                    total_size = await asyncio.to_thread(_write_file)
 
             from src.tools.file_tools import _format_size
 
