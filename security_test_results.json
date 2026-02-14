@@ -165,14 +165,14 @@
       "expected": "BLOCKED",
       "actual": "BLOCKED",
       "status": "PASS",
-      "reason": "URL scheme 'ftp' is not allowed. Allowed: https, http"
+      "reason": "URL scheme 'ftp' is not allowed. Allowed: http, https"
     },
     {
       "url": "file:///etc/passwd",
       "expected": "BLOCKED",
       "actual": "BLOCKED",
       "status": "PASS",
-      "reason": "URL scheme 'file' is not allowed. Allowed: https, http"
+      "reason": "URL scheme 'file' is not allowed. Allowed: http, https"
     }
   ],
   "command_injection": [

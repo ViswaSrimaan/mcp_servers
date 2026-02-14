@@ -41,7 +41,13 @@ graph TB
         G[Web Tools]
         H[App Tools]
         I[Utility Tools]
+        I2[Desktop Tools]
         J[Safety Module]
+    end
+
+    subgraph "Performance Layer"
+        P1[Shared HTTP Client]
+        P2[Perf Logging]
     end
 
     subgraph "System Resources"
@@ -51,16 +57,19 @@ graph TB
         N[Applications]
     end
 
-    A -->|stdio| D
-    B -->|stdio| D
-    C -->|stdio| D
+    A -->|stdio/sse| D
+    B -->|stdio/sse| D
+    C -->|stdio/sse| D
 
     D --> E
     D --> F
     D --> G
     D --> H
     D --> I
+    D --> I2
     D --> J
+    D --> P1
+    D --> P2
 
     E --> K
     F --> L
@@ -88,11 +97,14 @@ graph LR
         D[web_tools.py<br/>3 tools]
         E[app_tools.py<br/>5 tools]
         F[utility_tools.py<br/>4 tools]
+        F2[desktop_tools.py<br/>5 tools]
     end
 
     subgraph "src/"
         G[safety.py<br/>Confirmation System]
         H[security_config.py<br/>Security Hardening]
+        I[http_client.py<br/>Connection Pool + Retry]
+        J[perf.py<br/>Performance Logging]
     end
 
     A --> B
@@ -100,8 +112,11 @@ graph LR
     A --> D
     A --> E
     A --> F
+    A --> F2
     A --> G
     A --> H
+    A --> I
+    A --> J
 ```
 
 ---
@@ -149,6 +164,15 @@ graph LR
 | `uninstall_app` | Uninstall applications ⚠️ |
 | `update_app` | Update applications ⚠️ |
 
+### Desktop Automation
+| Tool | Description |
+|------|-------------|
+| `send_notification` | Send desktop notifications (toast/balloon) |
+| `schedule_task` | Schedule recurring tasks (Task Scheduler) ⚠️ |
+| `list_scheduled_tasks` | List scheduled tasks |
+| `delete_scheduled_task` | Delete scheduled tasks ⚠️ |
+| `get_window_list` | List open application windows |
+
 ### Utilities
 | Tool | Description |
 |------|-------------|
@@ -159,6 +183,26 @@ graph LR
 > ⚠️ = Destructive operation requiring confirmation via `confirm_action`
 
 ---
+
+## ⚡ Performance Enhancements
+
+| Feature | Description |
+|---------|-------------|
+| 🔄 **Connection Pooling** | Shared `httpx.AsyncClient` with 20 max connections and 10 keepalive |
+| 🔁 **Retry with Backoff** | Automatic retry on 429/5xx errors with exponential backoff + jitter |
+| 🧵 **Async Offloading** | All blocking `psutil`, clipboard, and screenshot calls run in threads via `asyncio.to_thread()` |
+| 📊 **Progress Notifications** | Real-time progress reporting during downloads, installs, and file searches |
+| ⏱️ **Performance Logging** | `@timed` decorator on all 34 tools logs execution time |
+| 🏥 **Health Check** | `server://health` resource exposes uptime, memory, and tool count |
+| 🚀 **Transport Options** | Support for `stdio`, `sse`, and `streamable-http` via `MCP_TRANSPORT` env var |
+
+### Environment Variables
+
+| Variable | Default | Options |
+|----------|---------|----------|
+| `MCP_TRANSPORT` | `stdio` | `stdio`, `sse`, `streamable-http` |
+| `MCP_LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `MCP_ALLOWED_DIRECTORIES` | *(all user dirs)* | Comma-separated list of allowed paths |
 
 ## 📦 Installation
 
@@ -311,6 +355,14 @@ Once configured, you can ask your AI assistant to:
 "Open https://github.com in my browser"
 ```
 
+### Desktop Automation
+```
+"Send a notification 'Task Complete' with message 'The build finished successfully'"
+"Schedule a task 'DailyBackup' to run 'backup.bat' daily at 10:00"
+"List all scheduled tasks"
+"Get a list of all open windows"
+```
+
 ---
 
 ## 🔒 Security & Safety
@@ -368,6 +420,8 @@ The following operations require explicit confirmation:
 | `shutdown_restart` | System-critical operation |
 | `uninstall_app` | Removes installed software |
 | `update_app` | Modifies installed software |
+| `schedule_task` | Creates system-level scheduled tasks |
+| `delete_scheduled_task` | Removes scheduled tasks |
 
 ### Safety Features
 
@@ -386,20 +440,24 @@ The following operations require explicit confirmation:
 
 ```
 mcp_servers/
-├── server.py              # Main MCP server entry point
+├── server.py              # Main MCP server entry point (lifespan, health resource, transport)
 ├── src/
 │   ├── __init__.py
 │   ├── safety.py          # Confirmation token system
 │   ├── security_config.py # Security hardening configuration
+│   ├── http_client.py     # Shared HTTP client with connection pooling & retry
+│   ├── perf.py            # @timed decorator & logging configuration
 │   └── tools/
 │       ├── __init__.py
 │       ├── system_tools.py    # System info, commands, processes
 │       ├── file_tools.py      # File management operations
 │       ├── web_tools.py       # Web search, fetch, download
 │       ├── app_tools.py       # Application management (winget)
-│       └── utility_tools.py   # Clipboard, screenshots, open apps
+│       ├── utility_tools.py   # Clipboard, screenshots, open apps
+│       └── desktop_tools.py   # Desktop automation, notifications, task scheduler
 ├── test_security.py       # Security test suite
 ├── SECURITY_REPORT.md     # Security audit report
+├── CONTRIBUTING.md        # Contribution guidelines
 ├── .venv/                 # Python virtual environment
 ├── .gitignore
 └── README.md

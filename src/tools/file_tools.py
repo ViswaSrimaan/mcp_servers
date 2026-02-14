@@ -2,6 +2,7 @@
 
 Provides tools for listing, reading, writing, copying, moving, deleting,
 and searching files and directories.
+All blocking file I/O is offloaded to threads.
 """
 
 import asyncio
@@ -12,6 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from mcp.server.fastmcp import Context
+
+from src.perf import timed
 from src.safety import create_confirmation_token
 from src.security_config import is_path_allowed
 
@@ -160,6 +164,7 @@ def register_tools(mcp) -> None:
     """Register all file tools with the MCP server."""
 
     @mcp.tool()
+    @timed
     async def list_files(path: str, show_hidden: bool = False) -> str:
         """List files and directories at the specified path.
 
@@ -191,6 +196,7 @@ def register_tools(mcp) -> None:
         }, indent=2)
 
     @mcp.tool()
+    @timed
     async def read_file(path: str, max_lines: int = 500) -> str:
         """Read the contents of a text file.
 
@@ -217,6 +223,7 @@ def register_tools(mcp) -> None:
         return json.dumps(result, indent=2)
 
     @mcp.tool()
+    @timed
     async def write_file(path: str, content: str, append: bool = False) -> str:
         """Write content to a file. Creates the file and parent directories if they don't exist.
 
@@ -256,6 +263,7 @@ def register_tools(mcp) -> None:
             return json.dumps({"status": "error", "message": f"Failed to write file: {e}"})
 
     @mcp.tool()
+    @timed
     async def create_directory(path: str) -> str:
         """Create a directory and any necessary parent directories.
 
@@ -277,6 +285,7 @@ def register_tools(mcp) -> None:
             return json.dumps({"status": "error", "message": f"Failed to create directory: {e}"})
 
     @mcp.tool()
+    @timed
     async def delete_file(path: str) -> str:
         """Delete a file or directory.
 
@@ -326,6 +335,7 @@ def register_tools(mcp) -> None:
         )
 
     @mcp.tool()
+    @timed
     async def move_file(source: str, destination: str) -> str:
         """Move or rename a file or directory.
 
@@ -363,6 +373,7 @@ def register_tools(mcp) -> None:
         )
 
     @mcp.tool()
+    @timed
     async def copy_file(source: str, destination: str) -> str:
         """Copy a file or directory to a new location.
 
@@ -399,7 +410,8 @@ def register_tools(mcp) -> None:
             return json.dumps({"status": "error", "message": f"Failed to copy: {e}"})
 
     @mcp.tool()
-    async def search_files(path: str, pattern: str, recursive: bool = True) -> str:
+    @timed
+    async def search_files(path: str, pattern: str, recursive: bool = True, ctx: Context = None) -> str:
         """Search for files matching a glob pattern.
 
         Args:
@@ -419,6 +431,17 @@ def register_tools(mcp) -> None:
 
         try:
             matches = await asyncio.to_thread(_search_sync)
+
+            # Report progress after search completes
+            if ctx:
+                try:
+                    await ctx.report_progress(
+                        progress=len(matches),
+                        total=len(matches),
+                    )
+                except Exception:
+                    pass
+
             results = _collect_search_results(matches)
 
             return json.dumps({
@@ -433,6 +456,7 @@ def register_tools(mcp) -> None:
             return json.dumps({"status": "error", "message": f"Search failed: {e}"})
 
     @mcp.tool()
+    @timed
     async def get_file_info(path: str) -> str:
         """Get detailed information about a file or directory.
 

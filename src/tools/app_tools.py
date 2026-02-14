@@ -2,25 +2,72 @@
 
 Provides tools for listing, searching, installing, uninstalling, and updating
 applications using Windows Package Manager (winget).
+Includes progress heartbeats for long-running winget operations.
 """
 
 import asyncio
 import json
 import logging
 
+from mcp.server.fastmcp import Context
+
+from src.perf import timed
 from src.safety import create_confirmation_token
 
 logger = logging.getLogger(__name__)
 
 
-async def _run_winget(args: list[str], timeout: int = 120) -> tuple[int, str, str]:
-    """Run a winget command and return (returncode, stdout, stderr)."""
+async def _run_winget(
+    args: list[str],
+    timeout: int = 120,
+    ctx: Context = None,
+) -> tuple[int, str, str]:
+    """Run a winget command and return (returncode, stdout, stderr).
+
+    If a Context is provided, sends periodic heartbeat progress updates
+    to keep the connection alive during long operations.
+    """
     process = await asyncio.create_subprocess_exec(
         "winget",
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
+
+    if ctx is None:
+        # Simple path — no progress reporting
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            return -1, "", f"Command timed out after {timeout} seconds."
+
+        return (
+            process.returncode,
+            stdout.decode("utf-8", errors="replace").strip(),
+            stderr.decode("utf-8", errors="replace").strip(),
+        )
+
+    # With progress heartbeats
+    heartbeat_interval = 5  # seconds
+    elapsed = 0.0
+
+    async def _heartbeat():
+        nonlocal elapsed
+        while True:
+            await asyncio.sleep(heartbeat_interval)
+            elapsed += heartbeat_interval
+            try:
+                await ctx.report_progress(
+                    progress=int(elapsed),
+                    total=timeout,
+                )
+            except Exception:
+                pass  # best-effort
+
+    heartbeat_task = asyncio.create_task(_heartbeat())
     try:
         stdout, stderr = await asyncio.wait_for(
             process.communicate(), timeout=timeout
@@ -28,6 +75,12 @@ async def _run_winget(args: list[str], timeout: int = 120) -> tuple[int, str, st
     except asyncio.TimeoutError:
         process.kill()
         return -1, "", f"Command timed out after {timeout} seconds."
+    finally:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
 
     return (
         process.returncode,
@@ -40,6 +93,7 @@ def register_tools(mcp) -> None:
     """Register all app management tools with the MCP server."""
 
     @mcp.tool()
+    @timed
     async def list_installed_apps(filter_name: str = "") -> str:
         """List installed applications using winget.
 
@@ -65,6 +119,7 @@ def register_tools(mcp) -> None:
         }, indent=2)
 
     @mcp.tool()
+    @timed
     async def search_available_apps(query: str) -> str:
         """Search for available applications in the winget repository.
 
@@ -88,7 +143,8 @@ def register_tools(mcp) -> None:
         }, indent=2)
 
     @mcp.tool()
-    async def install_app(app_id: str, source: str = "winget") -> str:
+    @timed
+    async def install_app(app_id: str, source: str = "winget", ctx: Context = None) -> str:
         """Install an application using winget.
 
         Args:
@@ -106,7 +162,7 @@ def register_tools(mcp) -> None:
             "--accept-package-agreements",
         ]
 
-        returncode, stdout, stderr = await _run_winget(args, timeout=300)
+        returncode, stdout, stderr = await _run_winget(args, timeout=300, ctx=ctx)
 
         if returncode == 0:
             return json.dumps({
@@ -123,6 +179,7 @@ def register_tools(mcp) -> None:
             }, indent=2)
 
     @mcp.tool()
+    @timed
     async def uninstall_app(app_id: str) -> str:
         """Uninstall an application using winget.
 
@@ -155,6 +212,7 @@ def register_tools(mcp) -> None:
         )
 
     @mcp.tool()
+    @timed
     async def update_app(app_id: str) -> str:
         """Update an installed application using winget.
 

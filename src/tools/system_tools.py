@@ -2,73 +2,188 @@
 
 Provides tools for system information, command execution, process management,
 battery status, shutdown/restart, and network information.
+All blocking psutil calls are offloaded to threads to avoid event-loop stalls.
 """
 
 import asyncio
 import json
 import logging
 import platform
-from typing import Literal
+from typing import Any
 
 import psutil
 
+from src.perf import timed
 from src.safety import create_confirmation_token
 
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Helpers — run blocking psutil work in threads
+# ---------------------------------------------------------------------------
+def _collect_system_info() -> dict[str, Any]:
+    """Collect system information synchronously (runs in thread)."""
+    info: dict[str, Any] = {
+        "os": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "version": platform.version(),
+            "hostname": platform.node(),
+            "architecture": platform.architecture()[0],
+            "processor": platform.processor(),
+        },
+        "cpu": {
+            "physical_cores": psutil.cpu_count(logical=False),
+            "logical_cores": psutil.cpu_count(logical=True),
+            "usage_percent": psutil.cpu_percent(interval=1),
+            "frequency_mhz": (
+                round(psutil.cpu_freq().current, 2) if psutil.cpu_freq() else None
+            ),
+        },
+        "memory": {
+            "total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
+            "available_gb": round(
+                psutil.virtual_memory().available / (1024**3), 2
+            ),
+            "used_gb": round(psutil.virtual_memory().used / (1024**3), 2),
+            "usage_percent": psutil.virtual_memory().percent,
+        },
+        "disk": [],
+    }
+
+    for partition in psutil.disk_partitions():
+        try:
+            usage = psutil.disk_usage(partition.mountpoint)
+            info["disk"].append({
+                "device": partition.device,
+                "mountpoint": partition.mountpoint,
+                "filesystem": partition.fstype,
+                "total_gb": round(usage.total / (1024**3), 2),
+                "used_gb": round(usage.used / (1024**3), 2),
+                "free_gb": round(usage.free / (1024**3), 2),
+                "usage_percent": usage.percent,
+            })
+        except (PermissionError, OSError):
+            continue
+
+    return info
+
+
+def _collect_processes(sort_by: str, limit: int) -> dict[str, Any]:
+    """Collect process list synchronously (runs in thread)."""
+    processes = []
+
+    for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]):
+        try:
+            pinfo = proc.info
+            processes.append({
+                "pid": pinfo["pid"],
+                "name": pinfo["name"],
+                "cpu_percent": round(pinfo["cpu_percent"] or 0, 1),
+                "memory_percent": round(pinfo["memory_percent"] or 0, 1),
+                "status": pinfo["status"],
+            })
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    sort_key = {
+        "memory": lambda p: p["memory_percent"],
+        "cpu": lambda p: p["cpu_percent"],
+        "name": lambda p: p["name"].lower(),
+    }.get(sort_by, lambda p: p["memory_percent"])
+
+    processes.sort(key=sort_key, reverse=(sort_by != "name"))
+
+    return {
+        "total_processes": len(processes),
+        "showing": min(limit, len(processes)),
+        "sort_by": sort_by,
+        "processes": processes[:limit],
+    }
+
+
+def _collect_battery() -> dict[str, Any]:
+    """Collect battery info synchronously (runs in thread)."""
+    battery = psutil.sensors_battery()
+
+    if battery is None:
+        return {
+            "status": "info",
+            "message": "No battery detected (desktop computer or battery not accessible).",
+        }
+
+    time_left = battery.secsleft
+    if time_left == psutil.POWER_TIME_UNLIMITED:
+        time_remaining = "Charging / Unlimited"
+    elif time_left == psutil.POWER_TIME_UNKNOWN:
+        time_remaining = "Unknown"
+    else:
+        hours = time_left // 3600
+        minutes = (time_left % 3600) // 60
+        time_remaining = f"{hours}h {minutes}m"
+
+    return {
+        "percent": round(battery.percent, 1),
+        "plugged_in": battery.power_plugged,
+        "time_remaining": time_remaining,
+    }
+
+
+def _collect_network() -> dict[str, Any]:
+    """Collect network info synchronously (runs in thread)."""
+    interfaces = []
+
+    addrs = psutil.net_if_addrs()
+    stats = psutil.net_if_stats()
+    io_counters = psutil.net_io_counters(pernic=True)
+
+    for iface_name, iface_addrs in addrs.items():
+        iface_info: dict[str, Any] = {
+            "name": iface_name,
+            "addresses": [],
+            "is_up": stats.get(iface_name, None) is not None
+            and stats[iface_name].isup,
+        }
+
+        for addr in iface_addrs:
+            addr_info: dict[str, Any] = {
+                "family": str(addr.family.name),
+                "address": addr.address,
+            }
+            if addr.netmask:
+                addr_info["netmask"] = addr.netmask
+            iface_info["addresses"].append(addr_info)
+
+        if iface_name in io_counters:
+            io = io_counters[iface_name]
+            iface_info["traffic"] = {
+                "bytes_sent_mb": round(io.bytes_sent / (1024**2), 2),
+                "bytes_recv_mb": round(io.bytes_recv / (1024**2), 2),
+                "packets_sent": io.packets_sent,
+                "packets_recv": io.packets_recv,
+            }
+
+        interfaces.append(iface_info)
+
+    return {"interfaces": interfaces}
+
+
+# ---------------------------------------------------------------------------
+# Tool registration
+# ---------------------------------------------------------------------------
 def register_tools(mcp) -> None:
     """Register all system tools with the MCP server."""
 
     @mcp.tool()
+    @timed
     async def get_system_info() -> str:
         """Get comprehensive system information including CPU, memory, disk, and OS details."""
-        info = {
-            "os": {
-                "system": platform.system(),
-                "release": platform.release(),
-                "version": platform.version(),
-                "hostname": platform.node(),
-                "architecture": platform.architecture()[0],
-                "processor": platform.processor(),
-            },
-            "cpu": {
-                "physical_cores": psutil.cpu_count(logical=False),
-                "logical_cores": psutil.cpu_count(logical=True),
-                "usage_percent": psutil.cpu_percent(interval=1),
-                "frequency_mhz": (
-                    round(psutil.cpu_freq().current, 2) if psutil.cpu_freq() else None
-                ),
-            },
-            "memory": {
-                "total_gb": round(psutil.virtual_memory().total / (1024**3), 2),
-                "available_gb": round(
-                    psutil.virtual_memory().available / (1024**3), 2
-                ),
-                "used_gb": round(psutil.virtual_memory().used / (1024**3), 2),
-                "usage_percent": psutil.virtual_memory().percent,
-            },
-            "disk": [],
-        }
-
-        for partition in psutil.disk_partitions():
-            try:
-                usage = psutil.disk_usage(partition.mountpoint)
-                info["disk"].append({
-                    "device": partition.device,
-                    "mountpoint": partition.mountpoint,
-                    "filesystem": partition.fstype,
-                    "total_gb": round(usage.total / (1024**3), 2),
-                    "used_gb": round(usage.used / (1024**3), 2),
-                    "free_gb": round(usage.free / (1024**3), 2),
-                    "usage_percent": usage.percent,
-                })
-            except (PermissionError, OSError):
-                continue
-
+        info = await asyncio.to_thread(_collect_system_info)
         return json.dumps(info, indent=2)
 
     @mcp.tool()
+    @timed
     async def run_command(command: str, timeout: int = 30) -> str:
         """Run a shell command on the system and return the output.
 
@@ -126,7 +241,7 @@ def register_tools(mcp) -> None:
             stdout_text = stdout.decode("utf-8", errors="replace").strip()
             stderr_text = stderr.decode("utf-8", errors="replace").strip()
 
-            result = {
+            result: dict[str, Any] = {
                 "status": "success" if process.returncode == 0 else "error",
                 "exit_code": process.returncode,
                 "command": command,
@@ -152,6 +267,7 @@ def register_tools(mcp) -> None:
         )
 
     @mcp.tool()
+    @timed
     async def list_processes(
         sort_by: str = "memory",
         limit: int = 20,
@@ -163,37 +279,11 @@ def register_tools(mcp) -> None:
             limit: Maximum number of processes to return (default: 20, max: 100).
         """
         limit = min(max(limit, 1), 100)
-        processes = []
-
-        for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "status"]):
-            try:
-                pinfo = proc.info
-                processes.append({
-                    "pid": pinfo["pid"],
-                    "name": pinfo["name"],
-                    "cpu_percent": round(pinfo["cpu_percent"] or 0, 1),
-                    "memory_percent": round(pinfo["memory_percent"] or 0, 1),
-                    "status": pinfo["status"],
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-
-        sort_key = {
-            "memory": lambda p: p["memory_percent"],
-            "cpu": lambda p: p["cpu_percent"],
-            "name": lambda p: p["name"].lower(),
-        }.get(sort_by, lambda p: p["memory_percent"])
-
-        processes.sort(key=sort_key, reverse=(sort_by != "name"))
-
-        return json.dumps({
-            "total_processes": len(processes),
-            "showing": min(limit, len(processes)),
-            "sort_by": sort_by,
-            "processes": processes[:limit],
-        }, indent=2)
+        result = await asyncio.to_thread(_collect_processes, sort_by, limit)
+        return json.dumps(result, indent=2)
 
     @mcp.tool()
+    @timed
     async def kill_process(pid: int, process_name: str = "") -> str:
         """Kill/terminate a running process by PID.
 
@@ -244,33 +334,14 @@ def register_tools(mcp) -> None:
         )
 
     @mcp.tool()
+    @timed
     async def get_battery_status() -> str:
         """Get battery status including charge level, plugged-in state, and time remaining."""
-        battery = psutil.sensors_battery()
-
-        if battery is None:
-            return json.dumps({
-                "status": "info",
-                "message": "No battery detected (desktop computer or battery not accessible).",
-            })
-
-        time_left = battery.secsleft
-        if time_left == psutil.POWER_TIME_UNLIMITED:
-            time_remaining = "Charging / Unlimited"
-        elif time_left == psutil.POWER_TIME_UNKNOWN:
-            time_remaining = "Unknown"
-        else:
-            hours = time_left // 3600
-            minutes = (time_left % 3600) // 60
-            time_remaining = f"{hours}h {minutes}m"
-
-        return json.dumps({
-            "percent": round(battery.percent, 1),
-            "plugged_in": battery.power_plugged,
-            "time_remaining": time_remaining,
-        }, indent=2)
+        result = await asyncio.to_thread(_collect_battery)
+        return json.dumps(result, indent=2)
 
     @mcp.tool()
+    @timed
     async def shutdown_restart(action: str) -> str:
         """Shutdown, restart, or put the computer to sleep.
 
@@ -338,40 +409,8 @@ def register_tools(mcp) -> None:
         )
 
     @mcp.tool()
+    @timed
     async def get_network_info() -> str:
         """Get network interface information including IP addresses and traffic statistics."""
-        interfaces = []
-
-        addrs = psutil.net_if_addrs()
-        stats = psutil.net_if_stats()
-        io_counters = psutil.net_io_counters(pernic=True)
-
-        for iface_name, iface_addrs in addrs.items():
-            iface_info = {
-                "name": iface_name,
-                "addresses": [],
-                "is_up": stats.get(iface_name, None) is not None
-                and stats[iface_name].isup,
-            }
-
-            for addr in iface_addrs:
-                addr_info = {
-                    "family": str(addr.family.name),
-                    "address": addr.address,
-                }
-                if addr.netmask:
-                    addr_info["netmask"] = addr.netmask
-                iface_info["addresses"].append(addr_info)
-
-            if iface_name in io_counters:
-                io = io_counters[iface_name]
-                iface_info["traffic"] = {
-                    "bytes_sent_mb": round(io.bytes_sent / (1024**2), 2),
-                    "bytes_recv_mb": round(io.bytes_recv / (1024**2), 2),
-                    "packets_sent": io.packets_sent,
-                    "packets_recv": io.packets_recv,
-                }
-
-            interfaces.append(iface_info)
-
-        return json.dumps({"interfaces": interfaces}, indent=2)
+        result = await asyncio.to_thread(_collect_network)
+        return json.dumps(result, indent=2)

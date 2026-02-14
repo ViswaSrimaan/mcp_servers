@@ -1,35 +1,28 @@
 """Web browsing tools for the Laptop Assistant MCP server.
 
 Provides tools for web searching, fetching webpage content, and downloading files.
+Uses the shared HTTP client for connection pooling and retry logic.
 """
 
 import json
 import logging
 from pathlib import Path
-from urllib.parse import quote_plus
 
-import httpx
 from bs4 import BeautifulSoup
+from mcp.server.fastmcp import Context
 
+from src.http_client import get_client, retry_request
+from src.perf import timed
 from src.security_config import is_url_safe, is_path_allowed
 
 logger = logging.getLogger(__name__)
-
-# Common headers to avoid being blocked
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
 
 
 def register_tools(mcp) -> None:
     """Register all web tools with the MCP server."""
 
     @mcp.tool()
+    @timed
     async def web_search(query: str, num_results: int = 5) -> str:
         """Search the web using DuckDuckGo and return results.
 
@@ -41,14 +34,12 @@ def register_tools(mcp) -> None:
 
         # Note: DuckDuckGo is a trusted search engine, no SSRF check needed here
         try:
-            async with httpx.AsyncClient(
-                headers=_HEADERS, follow_redirects=True, timeout=15.0
-            ) as client:
-                response = await client.get(
-                    "https://html.duckduckgo.com/html/",
-                    params={"q": query},
-                )
-                response.raise_for_status()
+            response = await retry_request(
+                "GET",
+                "https://html.duckduckgo.com/html/",
+                params={"q": query},
+                timeout=15.0,
+            )
 
             soup = BeautifulSoup(response.text, "html.parser")
             results = []
@@ -73,11 +64,6 @@ def register_tools(mcp) -> None:
                 "results": results,
             }, indent=2)
 
-        except httpx.TimeoutException:
-            return json.dumps({
-                "status": "error",
-                "message": "Search request timed out. Please try again.",
-            })
         except Exception as e:
             return json.dumps({
                 "status": "error",
@@ -85,6 +71,7 @@ def register_tools(mcp) -> None:
             })
 
     @mcp.tool()
+    @timed
     async def fetch_webpage(url: str, extract_text: bool = True) -> str:
         """Fetch a webpage and return its content.
 
@@ -101,11 +88,7 @@ def register_tools(mcp) -> None:
             })
 
         try:
-            async with httpx.AsyncClient(
-                headers=_HEADERS, follow_redirects=True, timeout=30.0
-            ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
+            response = await retry_request("GET", url, timeout=30.0)
 
             content_type = response.headers.get("content-type", "")
 
@@ -145,16 +128,6 @@ def register_tools(mcp) -> None:
                     "content": raw,
                 }, indent=2)
 
-        except httpx.TimeoutException:
-            return json.dumps({
-                "status": "error",
-                "message": f"Request to {url} timed out.",
-            })
-        except httpx.HTTPStatusError as e:
-            return json.dumps({
-                "status": "error",
-                "message": f"HTTP error {e.response.status_code} fetching {url}.",
-            })
         except Exception as e:
             return json.dumps({
                 "status": "error",
@@ -162,7 +135,8 @@ def register_tools(mcp) -> None:
             })
 
     @mcp.tool()
-    async def download_file(url: str, save_path: str) -> str:
+    @timed
+    async def download_file(url: str, save_path: str, ctx: Context = None) -> str:
         """Download a file from a URL to a local path.
 
         Args:
@@ -192,24 +166,46 @@ def register_tools(mcp) -> None:
         try:
             await asyncio.to_thread(lambda: target.parent.mkdir(parents=True, exist_ok=True))
 
-            async with httpx.AsyncClient(
-                headers=_HEADERS, follow_redirects=True, timeout=120.0
-            ) as client:
-                async with client.stream("GET", url) as response:
-                    response.raise_for_status()
+            client = get_client()
+            async with client.stream("GET", url, timeout=120.0) as response:
+                response.raise_for_status()
 
-                    # Collect chunks first, then write synchronously in thread
-                    chunks = []
-                    async for chunk in response.aiter_bytes(chunk_size=8192):
-                        chunks.append(chunk)
+                content_length = response.headers.get("content-length")
+                total = int(content_length) if content_length else None
 
-                    def _write_file():
-                        with open(target, "wb") as f:
-                            for chunk in chunks:
-                                f.write(chunk)
-                        return sum(len(c) for c in chunks)
+                # Collect chunks with progress reporting
+                chunks = []
+                downloaded = 0
+                chunk_count = 0
+                async for chunk in response.aiter_bytes(chunk_size=8192):
+                    chunks.append(chunk)
+                    downloaded += len(chunk)
+                    chunk_count += 1
 
-                    total_size = await asyncio.to_thread(_write_file)
+                    # Report progress every 10 chunks (~80KB)
+                    if ctx and chunk_count % 10 == 0:
+                        try:
+                            await ctx.report_progress(
+                                progress=downloaded,
+                                total=total or 0,
+                            )
+                        except Exception:
+                            pass  # progress reporting is best-effort
+
+                def _write_file():
+                    with open(target, "wb") as f:
+                        for c in chunks:
+                            f.write(c)
+                    return sum(len(c) for c in chunks)
+
+                total_size = await asyncio.to_thread(_write_file)
+
+            # Final progress report
+            if ctx:
+                try:
+                    await ctx.report_progress(progress=total_size, total=total_size)
+                except Exception:
+                    pass
 
             from src.tools.file_tools import _format_size
 
@@ -221,16 +217,6 @@ def register_tools(mcp) -> None:
                 "size": _format_size(total_size),
             }, indent=2)
 
-        except httpx.TimeoutException:
-            return json.dumps({
-                "status": "error",
-                "message": f"Download timed out for {url}.",
-            })
-        except httpx.HTTPStatusError as e:
-            return json.dumps({
-                "status": "error",
-                "message": f"HTTP error {e.response.status_code} downloading {url}.",
-            })
         except Exception as e:
             return json.dumps({
                 "status": "error",

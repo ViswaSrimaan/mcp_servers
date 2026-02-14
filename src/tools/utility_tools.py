@@ -1,8 +1,10 @@
 """Utility tools for the Laptop Assistant MCP server.
 
 Provides tools for clipboard management, opening applications, and screenshots.
+Blocking operations (clipboard, screenshot) are offloaded to threads.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -10,6 +12,7 @@ import platform
 import tempfile
 from pathlib import Path
 
+from src.perf import timed
 from src.security_config import is_execution_safe, is_path_allowed
 
 logger = logging.getLogger(__name__)
@@ -19,12 +22,16 @@ def register_tools(mcp) -> None:
     """Register all utility tools with the MCP server."""
 
     @mcp.tool()
+    @timed
     async def get_clipboard() -> str:
         """Get the current text content from the system clipboard."""
-        try:
-            import pyperclip
 
-            content = pyperclip.paste()
+        def _read_clipboard():
+            import pyperclip
+            return pyperclip.paste()
+
+        try:
+            content = await asyncio.to_thread(_read_clipboard)
 
             if not content:
                 return json.dumps({
@@ -49,16 +56,20 @@ def register_tools(mcp) -> None:
             })
 
     @mcp.tool()
+    @timed
     async def set_clipboard(text: str) -> str:
         """Set text content to the system clipboard.
 
         Args:
             text: The text to copy to the clipboard.
         """
-        try:
-            import pyperclip
 
+        def _write_clipboard():
+            import pyperclip
             pyperclip.copy(text)
+
+        try:
+            await asyncio.to_thread(_write_clipboard)
             preview = text[:100] + "..." if len(text) > 100 else text
             return json.dumps({
                 "status": "success",
@@ -73,6 +84,7 @@ def register_tools(mcp) -> None:
             })
 
     @mcp.tool()
+    @timed
     async def open_application(app_name_or_path: str) -> str:
         """Open an application by name or file path.
 
@@ -94,9 +106,8 @@ def register_tools(mcp) -> None:
 
         try:
             if platform.system() == "Windows":
-                os.startfile(app_name_or_path)
+                await asyncio.to_thread(os.startfile, app_name_or_path)
             else:
-                import asyncio
                 import subprocess
 
                 def _open_app():
@@ -123,15 +134,28 @@ def register_tools(mcp) -> None:
             })
 
     @mcp.tool()
+    @timed
     async def take_screenshot(save_path: str = "") -> str:
         """Take a screenshot of the current screen and save it to a file.
 
         Args:
             save_path: Path to save the screenshot. If empty, saves to a temp directory.
         """
-        try:
+
+        def _capture_screenshot(target: Path) -> dict:
             from PIL import ImageGrab
 
+            target.parent.mkdir(parents=True, exist_ok=True)
+            img = ImageGrab.grab()
+            img.save(str(target), "PNG")
+            return {
+                "status": "success",
+                "message": "Screenshot captured.",
+                "path": str(target),
+                "resolution": f"{img.size[0]}x{img.size[1]}",
+            }
+
+        try:
             if not save_path:
                 save_path = str(
                     Path(tempfile.gettempdir()) / "laptop_assistant_screenshot.png"
@@ -148,17 +172,8 @@ def register_tools(mcp) -> None:
                         "message": reason,
                     })
 
-            target.parent.mkdir(parents=True, exist_ok=True)
-
-            img = ImageGrab.grab()
-            img.save(str(target), "PNG")
-
-            return json.dumps({
-                "status": "success",
-                "message": "Screenshot captured.",
-                "path": str(target),
-                "resolution": f"{img.size[0]}x{img.size[1]}",
-            }, indent=2)
+            result = await asyncio.to_thread(_capture_screenshot, target)
+            return json.dumps(result, indent=2)
         except ImportError:
             return json.dumps({
                 "status": "error",
